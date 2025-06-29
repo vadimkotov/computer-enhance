@@ -16,7 +16,7 @@ enum Token<'a> {
 }
 
 /*
- * WARNING:
+ * NOTE
  *  - No support for escaped characters '\"'
  */
 fn take_string(data: &str) -> (&str, &str) {
@@ -102,8 +102,79 @@ fn tokenize(mut data: &str) -> Vec<Token> {
     tokens
 }
 
-fn parse(tokens: &[Token]) {
+struct Cursor<'a> {
+    tokens: &'a[Token<'a>],
+    pos: usize,
+}
 
+impl<'a> Cursor<'a> {
+    fn bump(&mut self) -> Option<&Token<'a>> {
+        let tok = self.tokens.get(self.pos);
+        self.pos += 1; 
+        tok
+    }
+
+    fn peek(&self) -> Option<&Token<'a>> {
+        self.tokens.get(self.pos)
+    }
+
+    fn expect(&mut self, wanted: &Token<'_>) {
+        match self.bump() {
+            Some(tok) if std::mem::discriminant(wanted) == std::mem::discriminant(tok) => {}, 
+            // TODO: improve error message, probably implement std::fmt::Display trait?
+            _ => panic!("Expected different token"),
+        }
+    }
+}
+
+fn parse_object(cursor: &mut Cursor) {
+    /* object
+        '{' members '}'
+    */
+    // Therefore we need to parse an arbitrary number of members.
+    loop {
+        // string ':' element
+        let Some(Token::Str(name)) = cursor.bump() else { panic!("Ran out of tokens when parsing Object") };
+        cursor.expect(&Token::Colon);
+        parse_value(cursor);
+        break;
+    }
+}
+
+fn parse_array(cursor: &mut Cursor) {
+    /* array
+        '[' elements ']'
+
+       elements
+        element
+        element ',' elements
+    */
+    loop {
+        parse_value(cursor);
+        break;
+    }
+
+}
+
+fn parse_value(cursor: &mut Cursor) {
+   // dbg!(cursor.peek());
+   match cursor.bump() {
+       Some(Token::BeginObj) => { parse_object(cursor)},
+       Some(Token::BeginArr) => { parse_array(cursor)},
+       Some(Token::Str(s)) => {},
+       Some(Token::Num(s)) => { 
+           // NOTE: we treat all numbers as f64
+           dbg!(s.parse::<f64>());
+       },
+       // TODO: provide info about the bad token
+       _ => panic!("Bad token"),
+   }  
+}
+
+
+fn parse(tokens: &[Token]) {
+    let mut cursor = Cursor{tokens: tokens, pos: 0};
+    parse_value(&mut cursor);
 }
 
 
@@ -115,6 +186,7 @@ fn process_json(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     file.read_to_string(&mut data)?;
 
     let tokens = tokenize(&data);
+    parse(&tokens);
 
     Ok(())
 }
