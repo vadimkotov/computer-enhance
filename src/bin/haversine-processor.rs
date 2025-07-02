@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::env;
 use std::io::Read;
 use std::fs::File;
@@ -107,6 +108,14 @@ struct Cursor<'a> {
     pos: usize,
 }
 
+#[derive(Debug)]
+enum JsonValue<'a> {
+    Num(f64), // NOTE: for simplicity we treat all numbers as f64!
+    Array(Vec<JsonValue<'a>>),
+    // NOTE: &str will probably need to change if we ever decide to support escaped characters.
+    Object(HashMap<&'a str, JsonValue<'a>>),
+}
+
 impl<'a> Cursor<'a> {
     fn bump(&mut self) -> Option<&Token<'a>> {
         let tok = self.tokens.get(self.pos);
@@ -127,21 +136,32 @@ impl<'a> Cursor<'a> {
     }
 }
 
-fn parse_object(cursor: &mut Cursor) {
+fn parse_object<'a>(cursor: &mut Cursor<'a>) -> Result<JsonValue<'a>, &'static str> {
     /* object
         '{' members '}'
     */
     // Therefore we need to parse an arbitrary number of members.
+    let mut map = HashMap::new();
     loop {
         // string ':' element
-        let Some(Token::Str(name)) = cursor.bump() else { panic!("Ran out of tokens when parsing Object") };
+        let key = match cursor.bump() {
+            Some(&Token::Str(s)) => s,
+            _ => return Err("Ran out of tokens when parsing object name"),
+        };
         cursor.expect(&Token::Colon);
-        parse_value(cursor);
-        break;
+        let val = parse_value(cursor)?;
+        map.insert(key, val); 
+        match cursor.peek() {
+            Some(Token::Comma) => { cursor.bump(); },
+            Some(Token::EndObj) => { cursor.bump(); break; },
+            _ => return Err("Expected comma or '}'"),
+        }
+            
     }
+    Ok(JsonValue::Object(map))
 }
 
-fn parse_array(cursor: &mut Cursor) {
+fn parse_array<'a>(cursor: &mut Cursor<'a>) -> Result<JsonValue<'a>, &'static str> {
     /* array
         '[' elements ']'
 
@@ -149,32 +169,34 @@ fn parse_array(cursor: &mut Cursor) {
         element
         element ',' elements
     */
+    let mut arr = Vec::new();
     loop {
-        parse_value(cursor);
-        break;
+        let val = parse_value(cursor)?;
+        arr.push(val);
+        match cursor.peek() {
+            Some(Token::Comma) => { cursor.bump(); },
+            Some(Token::EndArr) => { cursor.bump(); break; },
+            _ => return Err("Expected comma or ']'"),
+        }
     }
-
+    Ok(JsonValue::Array(arr))
 }
 
-fn parse_value(cursor: &mut Cursor) {
+fn parse_value<'a>(cursor: &mut Cursor<'a>) -> Result<JsonValue<'a>, &'static str> {
    // dbg!(cursor.peek());
    match cursor.bump() {
-       Some(Token::BeginObj) => { parse_object(cursor)},
-       Some(Token::BeginArr) => { parse_array(cursor)},
-       Some(Token::Str(s)) => {},
-       Some(Token::Num(s)) => { 
-           // NOTE: we treat all numbers as f64
-           dbg!(s.parse::<f64>());
-       },
+       Some(Token::BeginObj) => parse_object(cursor),
+       Some(Token::BeginArr) => parse_array(cursor),
+       Some(Token::Num(s)) => Ok(JsonValue::Num(s.parse::<f64>().map_err(|_| "Bad f64")?)),
        // TODO: provide info about the bad token
-       _ => panic!("Bad token"),
-   }  
+       _ => Err("Bad token"), 
+   }
 }
 
 
 fn parse(tokens: &[Token]) {
     let mut cursor = Cursor{tokens: tokens, pos: 0};
-    parse_value(&mut cursor);
+    let res = parse_value(&mut cursor);
 }
 
 
